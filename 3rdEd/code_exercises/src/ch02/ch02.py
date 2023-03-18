@@ -39,6 +39,7 @@ from sklearn.model_selection import RandomizedSearchCV
 from scipy.stats import randint
 import joblib
 from scipy import stats
+from keras.engine.data_adapter import broadcast_sample_weight_modes
 
 
 
@@ -373,11 +374,142 @@ def main():
     # plt.show()
     
     
+    # for a custom transformer that actually has to learn using fit(), we need to write
+    # a custom class. SKLearn uses duck typing, so we don't have to inherit from any specific
+    # class. We just need to implement the three methods fit(), transform(), and
+    # fit_transform()
+    
+    # We can, however, use TransformerMixin as a base class to get some default implementations to
+    # help us out. Likewise, using BaseEstimator as a base class provides default support for
+    # get_params() and set_params()
+    
+    # here's a custom transformer that is approximately the same as StandardScaler
+    
+    class StandardScalerClone( BaseEstimator, TransformerMixin ):
+        def __init__(self, with_mean = True ):
+            self.with_mean = with_mean
+            
+        def fit(self, X, y=None ):
+            
+            X = check_array(X) # checks that X is an array with finite float values
+            self.mean_ = X.mean(axis=0)
+            self.scale_ = X.std(axis=0)
+            self.n_features_in_ = X.shape[1] # every estimator stores this in fit()
+            return self # always returns self
+            
+            
+        def transform(self, X):
+            check_is_fitted(self) # looks for learned attributes (with trailing _)
+            X = check_array(X)
+            assert self.n_features_in_ == X.shape[1]
+            if self.with_mean:
+                X = X - self.mean_
+            
+            return X / self.scale_
+        
+    # end class StandardScalerClone
+    
+    # Pipelines
+    # SKLearn provides a Pipeline class to help with making sure sequences of transformation steps
+    # that need to occur in the right order are indeed performed so.
+    
+    # num_pipeline = Pipeline( [ ("impute", SimpleImputer(strategy="median")),
+    #                           ("standardize", StandardScaler())] )
+    
+
+    num_pipeline = make_pipeline( SimpleImputer(strategy="median"), StandardScaler())
+    
+    housing_num_prepared = num_pipeline.fit_transform(housing_num)
+    print( "\n", housing_num_prepared[:2].round(2))
     
     
+    # again, to get back to a DataFrame, we can use the get_feature_names_out() method
+    # df_housing_num_prepared = pd.DataFrame( housing_num_prepared, 
+    #                                        columns=num_pipeline.get_feature_names_out(), 
+    #                                        index=housing_num.index )
     
     
+    # if we want to handle numerical and categorical features in a single transform step, we
+    # can use ColumnTransformer and pass it two pipelines, one for numerical features and one for
+    # categorical features.
     
+    num_attribs = [ "longitude", "latitude", "housing_median_age", "total_rooms", "total_bedrooms", "population", "households", "median_income" ]
+    cat_attribs = [ "ocean_proximity" ]
+    
+    cat_pipeline = make_pipeline( SimpleImputer(strategy="most_frequent" ), OneHotEncoder(handle_unknown="ignore" ))
+    
+    preprocessing = ColumnTransformer([ ( "num", num_pipeline, num_attribs ), 
+                                        ( "cat", cat_pipeline, cat_attribs ) ])
+    
+    
+    housing_prepared = preprocessing.fit_transform( housing )
+        
+    df_housing_prepared = pd.DataFrame( housing_prepared, columns=preprocessing.get_feature_names_out(), index=housing.index)    
+        
+    # All together now, the condensed code to create a pipeline that does the following:
+    # - missing values are replaced by the median value
+    # - categorical features are one-hot encoded
+    # - some ratio features are computed and added: bedrooms_ratio, rooms_per_house, people_per_house
+    # - some cluster similarity features are added. Probably more useful that the raw longitude and latitude
+    # - features with a long-tail are replaced by their logarithm
+    # - all numerical features are standardized
+    
+    class ClusterSimilarity(BaseEstimator, TransformerMixin):
+        def __init__(self, n_clusters=10, gamma=1.0, random_state=None):
+            self.n_clusters = n_clusters
+            self.gamma = gamma
+            self.random_state = random_state
+        
+        def fit(self, X, y=None, sample_weight=None):
+            self.kmeans_ = KMeans(self.n_clusters, random_state=self.random_state, n_init=10)
+            self.kmeans_.fit(X, sample_weight=sample_weight)
+            return self # always return self!
+        
+        def transform(self, X):
+            return rbf_kernel( X, self.kmeans_.cluster_centers_, gamma=self.gamma)
+        
+        def get_feature_names_out(self, names=None):
+            return [f"Cluster {i} similarity" for i in range(self.n_clusters)]
+        
+        
+        
+    def column_ratio(X):
+        return X[:, [0]] / X[:,[1]]
+    
+    def ratio_name( function_transformer, feature_names_in):
+        return ["ratio"]
+    
+    def ratio_pipeline():
+        return make_pipeline( 
+                SimpleImputer(strategy="median"),
+                FunctionTransformer(column_ratio, feature_names_out=ratio_name),
+                StandardScaler()
+            )
+    
+    log_pipeline = make_pipeline( SimpleImputer(strategy="median"),
+                                  FunctionTransformer(np.log, feature_names_out="one-to-one"),
+                                  StandardScaler())
+    
+    cluster_simil = ClusterSimilarity(n_clusters=10, gamma=1.0, random_state=42)
+    default_num_pipeline = make_pipeline(SimpleImputer(strategy="median"), StandardScaler())
+    
+    preprocessing = ColumnTransformer([
+            ( "bedrooms", ratio_pipeline(), ["total_bedrooms", "total_rooms"]),
+            ( "rooms_per_house", ratio_pipeline(), ["total_rooms", "households"]),
+            ( "people_per_house", ratio_pipeline(), ["population", "households"]),
+            ( "log", log_pipeline, [ "total_bedrooms", "total_rooms", "population", "households", "median_income"]),
+            ( "geo", cluster_simil, ["latitude", "longitude"]),
+            ( "cat", cat_pipeline, make_column_selector(dtype_include=object))],
+       remainder=default_num_pipeline)  
+      
+
+    housing_prepared2 = preprocessing.fit_transform(housing)
+    
+    print( "\n\n", housing_prepared2.shape )
+    
+    print( preprocessing.get_feature_names_out())
+    
+        
     print( "\n\ndone" )
    
 
