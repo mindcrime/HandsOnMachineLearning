@@ -509,6 +509,128 @@ def main():
     
     print( preprocessing.get_feature_names_out())
     
+    # now let's train a model and make some predictions!
+    
+    lin_reg = make_pipeline(preprocessing, LinearRegression())
+    
+    print( "\n\nModel training in progress\n" )
+    lin_reg.fit( housing, housing_labels )
+    print( "\n\nModel training completed\n" )
+    
+    housing_predictions = lin_reg.predict(housing)
+    
+    
+    print( housing_predictions[:5].round(-2) ) # -2 rounded to the nearest hundred
+    print( "\n", housing_labels.iloc[:5].values )
+    
+    # now let's measure the error of our predictions, relative to reality
+    lin_rmse = mean_squared_error(housing_labels, housing_predictions, squared=False)
+    
+    print( "\nRMSE for linear model: ", lin_rmse )
+    
+    # That's a lot of error, suggesting that our model is UNDER-fitting pretty badly
+    # let's try a more powerful model than simple Linear Regression
+    
+    tree_reg = make_pipeline(preprocessing, DecisionTreeRegressor(random_state=42))
+    
+    print( "\n\nModel training in progress\n" )
+    # tree_reg.fit( housing, housing_labels )
+    print( "\n\nModel training completed\n" )
+    
+    # housing_predictions = tree_reg.predict(housing)
+    
+    
+     # print( housing_predictions[:5].round(-2) ) # -2 rounded to the nearest hundred
+     # print( "\n", housing_labels.iloc[:5].values )
+    
+    # now let's measure the error of our predictions, relative to reality
+    # tree_rmse = mean_squared_error(housing_labels, housing_predictions, squared=False)
+    
+    # print( "\nRMSE for tree model: ", tree_rmse )
+    
+    # No error at all? How's that possible??? Probably because the  model has badly OVER-fit the data
+    # this time.
+        
+    # We could better evaluate this by using the train_test_split() function to split our
+    # training set up into smaller chunks, train the model against the smaller chunks, and then
+    # re-evaluate against the new validation set. 
+    # This would work, but its a bit of trouble.
+    # Fortunately, scikit-learn has a built-in k-fold cross-validation feature.
+    # this will split the training set into 10 random, non-overlapping sets, called
+    # folds, then train the model 10 times, each time using a different set for evaluation and
+    # the other 9 for training. The result is an array containing 10 evaluation scores.
+    # this will give us a better idea of how well our model is really working.
+    
+    print( "\n\nModel training in progress\n" )
+    # tree_rmses = -cross_val_score( tree_reg, housing, housing_labels, scoring="neg_root_mean_squared_error", cv=10)
+    print( "\n\nModel training completed\n" )
+        
+    # print( pd.Series(tree_rmses).describe() )
+    
+    # looking at the mean error over 10 runs, we now see that the decision tree really isn't much better
+    # It's *slightly* better, as seen by the smaller std deviation as compared to the Linear Regression
+    # model, but by and large this still isn't good.
+    
+    # Let's now try one more thing - a RandomForestRegressor. Random Forests work by training 
+    # many decision trees on random subsets of the features, and then averaging out their predictions.
+    
+    
+    forest_reg = make_pipeline( preprocessing, RandomForestRegressor(random_state=42))
+    
+    
+    print( "\n\nModel training in progress\n" )
+     
+    # forest_rmses = -cross_val_score( forest_reg, housing, housing_labels, scoring="neg_root_mean_squared_error", cv=10 )
+    
+    print( "\n\nModel training completed\n" )
+   
+    
+    # print( "\n\n", pd.Series(forest_rmses).describe() )
+    
+    
+    # this is better still, although far from perfect. We could try other algorithms
+    # possibly including SVM, or NeuralNetworks
+    
+    # Once we have a short-list of candidate approaches, the next step is to try different
+    # hyperparameters. We could do all of this manually, but there is a handy GridSearchCV
+    # class that can automate this for us and and make it easy for us to find the best
+    # combinations.
+    
+    full_pipeline = Pipeline( [
+        ("preprocessing", preprocessing ),
+        ("random_forest", RandomForestRegressor(random_state=42))
+        ] )
+    param_grid = [{ "preprocessing__geo__n_clusters": [5, 8, 10],
+                   "random_forest__max_features":[4, 6, 8]},
+                  { "preprocessing__geo__n_clusters": [10, 15],
+                     "random_forest__max_features": [6, 8, 10 ] }]
+    
+    grid_search = GridSearchCV( full_pipeline, param_grid, cv=3, scoring="neg_root_mean_squared_error" )
+    
+    print( "\nTraining in progress!\n" )
+    grid_search.fit( housing, housing_labels )
+    print( "\nTraining completed!" )
+    
+    print( "\nBest params: ", grid_search.best_params_ )
+    
+    print( "\nBest estimator: ", grid_search.best_estimator_ )
+    
+    cv_res = pd.DataFrame(grid_search.cv_results_)
+    cv_res.sort_values(by="mean_test_score", ascending=False, inplace=True)
+    print( "cv_res:\n", cv_res.head())
+    
+    
+    # grid_housing_predictions = grid_search.best_estimator_.predict(housing)
+    
+    # print( grid_housing_predictions[:5].round(-2) ) # -2 rounded to the nearest hundred
+    # print( "\n", housing_labels.iloc[:5].values )
+    
+    # grid_rmses = -cross_val_score( grid_search.best_estimator_, housing, housing_labels, scoring="neg_root_mean_squared_error", cv=10 )
+    
+    # print( "\n\n", pd.Series(grid_rmses).describe() )
+        
+        
+        
         
     print( "\n\ndone" )
    
